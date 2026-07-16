@@ -1,4 +1,4 @@
-#### GPIO
+## GPIO
 
 ```c
 //头文件 (driver为文件夹名称，表示gpio在该文件夹下)
@@ -35,7 +35,7 @@ void app_main(void)
 }
 ```
 ------------
-#### 中断
+## 中断
 
 ```c
 void exti_isr_handler(void*arg)  //中断回调函数
@@ -65,7 +65,7 @@ void exti_init(void)
 
 
 
-#### 定时器函数
+## 定时器函数
 
 ###### 1.通用定时器（硬件定时器）
 
@@ -173,7 +173,7 @@ void duty_set(uint16_t duty)
 
 -----
 
-#### ADC
+## ADC
 
 ###### 1.连续转换模式
 
@@ -265,7 +265,7 @@ adc_oneshot_read(adc_unit_handle,ADC_CHANNEL_3,&adc_value_rl);
 
 -----------------
 
-#### 串口
+## 串口
 
 ```c
 #include "driver/uart.h"
@@ -313,23 +313,23 @@ void uart_pron()
 
 ------------------
 
-#### I2C
+## I2C
 
 ```C
 ```
 
 ----
 
-#### SPI
+## SPI
 
 ```C
 ```
 
 -----
 
-#### WI-FI连接函数
+## WI-FI
 
-**==工作模式==**
+#### **==工作模式==**
 **STA模式：** 连接WiFi上网
 **AP模式：** 自己当热点
 **混合模式** 
@@ -338,49 +338,175 @@ void uart_pron()
 
 ![[Pasted image 20260716164554.png]]
 
-**LWIP协议栈：** WiFi设备必需遵循的统一标准，只有这样数据才能正确传输和解析
+**NVS存储:** 非易失性存储，用于在Flash中存储WiFi的校准数据和用户配置。初始化WiFi前必须先初始化NVS，否则可能导致WiFi校准不准或出现错误。
+
+**LWIP协议栈：** WiFi设备必需遵循的统一标准，只有这样数据才能正确传输和解析。
 
 **循环事件组：** ESP32把WiFi相关的各种状态变化都封装成事件，可以分为 **WiFi事件** 和 **IP事件** ，而循环事件组就是专门用于监听这些事件，一旦触发了这些事件就会执行对应的事件函数。例如：STA模式开启WiFi后要等待连接，什么时候知道连上了呢？就是通过循环事件组进行监听。
 
+#### **==开发流程：**
+1. **初始化NVS存储、LWIP协议栈
+2. **绑定网络接口：** 建立WiFi模块与LWIP协议栈之间的连接通道，使数据可以在两者间流转。
+3. **初始化WiFi配置：** 设置工作模式和相关参数
+4. **创建事件循环组并注册事件处理函数：** 监听WiFi状态变化，事件触发时自动执行对应的处理逻辑
+5. **启动WiFi并连接
 
 
 
-###### Station 模式
+#### Station 模式
 ```c
-// 初始化WIFI
-esp_netif_create_default_wifi_sta();
-wifi_config_t cfg= WOFO_INIT_CONFIG_DEFAULT();
-esp_wifi_init(&cfg);
+//事件函数
+void WiFi_sta_event_handler(void* event_handler_arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+	if(event_base == WIFI_EVENT)    //先判断事件组
+	{
+		if(event_id == WIFI_EVENT_STA_START)  //再判断事件编号
+		{
+			esp_wifi_connect();   //开始连接
+		}
+		else if(event_id == WIFI_EVENT_STA_CONNECTED)
+		{
+			//已连接
+		}
+		else if(event_id == WIFI_EVENT_STA_DISCONNECTED)
+		{
+			//未连接
+		}
+	}
+	else if(event_base == IP_EVENT)   //事件组：获取IP地址
+	{
+		if(event_id == IP_EVENT_STA_GOT_IP)
+		{
+			esp_netif_ip_info_t *event = (esp_netif_ip_info_t *)event_data
+		}
+	}
+}
 
-// 配置WiFi
-wifi_config_t wifi_config={
- .sta={
-	 .ssid="你的WiFi名"
-	 .password="你的密码"
-	 }，
-}；
-esp_wifi_set_mode(WIFI_MODE_STA);
-esp_wifi_set_config(WIFI_IF_STA,&wifi_config);
+//初始化
+void WiFi_sta_init(void)
+{
+	esp_netif_init();   //初始化LWIP协议栈
+	esp_netif_create_default_wifi_sta();  //将WiFi模块与LWIP技术栈连接
+	
+	wifi_init_config_t cfg= WIFI_INIT_CONFIG_DEFAULT();  //把WiFi配置成默认的设置，后面的宏定义即默认的WiFi配置
+	esp_wifi_init(&cfg);
+	esp_wifi_set_mode(WIFI_MODE_STA);     //设置模式
+	wifi_config_t wifista_cofig = {
+		.sta={
+			.ssid= "",
+			.password= "",
+		}
+	}
+	esp_wifi_set_config(WIFI_IF_STA,&wifista_config);   //模式配置
+	
+	esp_event_loop_create_default();  //创建循环事件组用于监听WiFi模块的各种事件
+	esp_event_handler_register(WIFI_EVENT,   //要注册的事件组名称
+								ESP_EVENT_ANY_ID,    //事件组中具体的事件编号
+								&WiFi_sta_event_handler,  //创建事件函数，并将事件组与事件函数匹配起来
+								NULL);   //向事件函数的第一个参数传送的数据
+	esp_event_handler_register(IP_EVENT,   //要注册的事件组名称
+								IP_EVENT_STA_GOT_IP,    //事件组中具体的事件编号
+								&WiFi_sta_event_handler,  //创建事件函数，并将事件组与事件函数匹配起来
+								NULL);   //向事件函数的第一个参数传送的数据
+	
+	esp_wifi_start();
+}
 
-// 开始连接
-esp_wifi_start();
-esp_wifi_connect();
 ```
-###### WiFi 事件处理
+
+#### AP模式 
+```c 
+void WiFi_sta_event_handler(void* event_handler_arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+	if(event_base == WIFI_EVENT)
+	{
+		if(event_id == WIFI_EVENT_AP_STACONNECTED)
+		{
+			
+		}
+		else if(event_id == WIFI_EVENT_AP_STADISCONNECTED)
+		{
+			
+		}
+	}
+}
+
+//初始化
+void WiFi_sta_init(void)
+{
+	esp_netif_init();   //初始化LWIP协议栈
+	esp_netif_create_default_wifi_ap();  //将WiFi模块与LWIP技术栈连接
+	
+	wifi_init_config_t cfg= WIFI_INIT_CONFIG_DEFAULT();  //把WiFi配置成默认的设置，后面的宏定义即默认的WiFi配置
+	esp_wifi_init(&cfg);
+	esp_wifi_set_mode(WIFI_MODE_AP);     //设置模式
+	wifi_config_t wifiap_cofig = {
+		.ap={
+			.ssid= "",
+			.password= "",
+			.ssid_len=,
+			.max_connection=,
+			.authmode=,
+		}
+	}
+	esp_wifi_set_config(WIFI_IF_AP,&wifiap_config);   //模式配置
+	
+	esp_event_loop_create_default();  //创建循环事件组用于监听WiFi模块的各种事件
+	esp_event_handler_register(WIFI_EVENT,   //要注册的事件组名称
+								ESP_EVENT_ANY_ID,    //事件组中具体的事件编号
+								&WiFi_ap_event_handler,  //创建事件函数，并将事件组与事件函数匹配起来
+								NULL);   //向事件函数的第一个参数传送的数据
+	
+	
+	esp_wifi_start();
+}
+```
+
+#### 获取网络时间
 ```c
-// 注册事件处理函数
-esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_event_handler,NULL);
-esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,got_ip_handler,NULL);
+
 ```
-
-
-
 
 ------------
 
-#### BLE
+## BLE
+
+**蓝牙标准：** **GAP连接标准** 和 **GATT通信标准** 
+
+##### GAP连接标准下：
+**外围设备：** 通常是传感器、智能灯泡这类==拥有数据的设备==
+**中央设备：** 通常是手机、电脑这类==可以主动发起连接的设备==
+
+**广播：** 外围设备会广播自己的存在，等待其他设备的连接
+**扫描：** 中央设备会主动扫描周围的广播，以寻找目标设备
+
+##### GATT通信标准下：
+**服务：** 代表设备的一项功能，例如：温度计服务，电池服务等                 ==（UUID，特征）==
+**特征：** 是蓝牙传输的基本单元，例如：温度、电池电量等。值承载特征的具体数据。==（UUID,值，属性）==
+**属性：** 属性定义了特征的操作权限
+**UUID:** 通用唯一识别码，用于特征识别
+==通信之前，外围设备向中央设备发送配置文件，配置文件中可以包含多个服务，每个服务由一个服务UUID和多个特征组成，每个特征又都有其独有的UUID、值和属性==
+
+![[Pasted image 20260716221903.png]]
+
+
+
+![[Pasted image 20260716223442.png]]
+
+**NimBLE协议栈:** 统一的通信标准，让不同设备互相兼容， 
+**蓝牙协议循环事件组：** 专门用于监听蓝牙协议栈产生的事件，针对不同的事件触发不同的事件函数，分为连接事件和通信事件
+
+##### 开发流程：
+1. **初始化协议栈，配置GAP/GATT，配置设备信息**
+2. **注册服务和特征列表**
+3. **注册回调函数**
+4. **开启广播** 
+5. **创建监听任务，并创建事件函数** 
+
+
 
 ```C
+
 ```
 
 -------------
